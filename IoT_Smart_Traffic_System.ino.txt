@@ -1,0 +1,102 @@
+#include <WiFi.h>
+#include "ThingSpeak.h"
+
+// WiFi credentials
+const char* ssid = "Your_WiFi_SSID";
+const char* password = "Your_WiFi_Password";
+
+// ThingSpeak API
+WiFiClient client;
+unsigned long channelID = YOUR_CHANNEL_ID;
+const char* writeAPIKey = "YOUR_WRITE_API_KEY";
+
+// Ultrasonic sensor pins
+const int trigPins[4] = {5, 18, 19, 21};
+const int echoPins[4] = {4, 17, 16, 15};
+
+// Traffic light pins
+const int redPins[4] = {25, 26, 27, 14};
+const int greenPins[4] = {32, 33, 12, 13};
+
+// IR emergency sensor
+const int ambulanceIR = 22;
+
+long duration;
+int distance[4];
+
+void setup() {
+  Serial.begin(115200);
+  
+  // Initialize pins
+  for (int i = 0; i < 4; i++) {
+    pinMode(trigPins[i], OUTPUT);
+    pinMode(echoPins[i], INPUT);
+    pinMode(redPins[i], OUTPUT);
+    pinMode(greenPins[i], OUTPUT);
+  }
+  
+  pinMode(ambulanceIR, INPUT);
+
+  // Connect to WiFi
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nConnected!");
+  
+  ThingSpeak.begin(client);
+}
+
+void loop() {
+  // Read distances from all four ultrasonic sensors
+  for (int i = 0; i < 4; i++) {
+    digitalWrite(trigPins[i], LOW);
+    delayMicroseconds(2);
+    digitalWrite(trigPins[i], HIGH);
+    delayMicroseconds(10);
+    digitalWrite(trigPins[i], LOW);
+    duration = pulseIn(echoPins[i], HIGH);
+    distance[i] = duration * 0.034 / 2; // Distance in cm
+  }
+
+  // Check if ambulance detected
+  if (digitalRead(ambulanceIR) == LOW) {
+    Serial.println("🚨 Ambulance Detected! Giving Priority!");
+    for (int i = 0; i < 4; i++) {
+      digitalWrite(redPins[i], HIGH);
+      digitalWrite(greenPins[i], LOW);
+    }
+    digitalWrite(greenPins[0], HIGH); // Give priority to lane 1
+    delay(5000);
+  } else {
+    // Control traffic dynamically based on vehicle density
+    for (int i = 0; i < 4; i++) {
+      if (distance[i] < 15) {
+        digitalWrite(redPins[i], LOW);
+        digitalWrite(greenPins[i], HIGH);
+        delay(5000);
+        digitalWrite(greenPins[i], LOW);
+        digitalWrite(redPins[i], HIGH);
+      } else {
+        digitalWrite(redPins[i], HIGH);
+        digitalWrite(greenPins[i], LOW);
+      }
+    }
+  }
+
+  // Send data to ThingSpeak
+  for (int i = 0; i < 4; i++) {
+    ThingSpeak.setField(i + 1, distance[i]);
+  }
+  
+  int status = ThingSpeak.writeFields(channelID, writeAPIKey);
+  if (status == 200) {
+    Serial.println("Data sent to ThingSpeak!");
+  } else {
+    Serial.println("Failed to send data!");
+  }
+
+  delay(15000);
+}
